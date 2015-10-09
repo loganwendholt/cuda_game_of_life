@@ -18,6 +18,8 @@ void reshape(int w, int h);
 void update();
 void graphics_init();
 void add_rabbits_pattern(int start_x, int start_y);
+struct timespec timer_start();
+long timer_end(struct timespec start_time);
 
 /* ----- Defines ----- */
 #define WINDOW_WIDTH 640    // width of window in pixels
@@ -55,6 +57,49 @@ char *nextGrid = gridB;
 
 
 /* ----- Function Definitions ----- */
+
+
+/* ***************************************************
+*  FUNCTION:  timer_start
+*
+*  DESCRIPTION:
+*    Begins running a nanosecond-resolution timer
+*  
+*  PARAMETERS:
+*    none
+*     
+*  RETURN VALUE:
+*    struct timespec:  a reference to the timer's start time
+*
+* ****************************************************/
+struct timespec timer_start(){
+    struct timespec start_time;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &start_time);
+    return start_time;
+}
+
+/* ***************************************************
+*  FUNCTION:  timer_end
+*
+*  DESCRIPTION:
+*    Used to end a nanosecond-resolution timer
+*  
+*  PARAMETERS:
+*    struct timespec start_time: the value returned by the timer_start function
+*     
+*  RETURN VALUE:
+*    long:  The difference in the start and end times, in nanoseconds
+*
+* ****************************************************/
+long timer_end(struct timespec start_time){
+    struct timespec end_time;
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &end_time);
+    long diffInNanos = end_time.tv_nsec - start_time.tv_nsec;
+    return diffInNanos;
+}
+// ----- END TIMING FUNCTIONS ------------------------
+
+
 
 /* ***************************************************
 *  FUNCTION:  mod
@@ -172,7 +217,10 @@ void reshape(int w, int h) {
 *
 * ****************************************************/
 void update() {
+	struct timespec vartime = timer_start();
     life_update();
+	long time_elapsed_nanos = timer_end(vartime);
+	printf("Time taken (nanoseconds): %ld\n", time_elapsed_nanos);
 	glutPostRedisplay();
 }
 
