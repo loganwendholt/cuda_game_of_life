@@ -27,6 +27,9 @@ long timer_end(struct timespec start_time);
 #define GAME_WIDTH 128      // number of cells it takes to span the window horizontally
 #define GAME_HEIGHT 96      // number of cells it takes to span the window vertically
 
+#define NUM_BLOCKS GAME_HEIGHT
+#define NUM_THREADS GAME_WIDTH
+
 #define WHITE 1.0, 1.0, 1.0 // RGB float values for white, in OpenGL format
 #define BLACK 0.0, 0.0, 0.0 // RGB float values for black, in OpenGL format
 
@@ -55,9 +58,110 @@ char gridB[GAME_HEIGHT*GAME_WIDTH];
 char *grid = gridA;
 char *nextGrid = gridB; 
 
+// define pointers to GPU memory
+char *lifeData;
+char *nextLifeData;
+
 
 /* ----- Function Definitions ----- */
 
+/* ***************************************************
+*  FUNCTION:  life_kernel
+*
+*  DESCRIPTION:
+*    CUDA kernel to process a single cell on the life grid
+*  
+*  PARAMETERS:
+*    char *sourceGrid:  a reference to the current simulation data
+*    char *destGrid:    location of memory to save new simulation data
+*
+*  RETURN VALUE:
+*    none
+*
+* ****************************************************/
+__global__ void life_kernel(char *sourceGrid, char *destGrid)
+{
+
+  /* Work out our thread id */
+  unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+  unsigned int idy = (blockIdx.y * blockDim.y) + threadIdx.y;
+  unsigned int tid = idx + idy * blockDim.x * gridDim.x;
+
+  /* Get the x-y coordinates of the cell being processed */
+  unsigned int x = tid % GAME_WIDTH;
+  unsigned int y = tid / GAME_WIDTH;
+
+  unsigned int xLeft  = (x-1 + GAME_WIDTH)  % GAME_WIDTH;
+  unsigned int xRight = (x+1 + GAME_WIDTH)  % GAME_WIDTH;
+  unsigned int yUp    = (y-1 + GAME_HEIGHT) % GAME_HEIGHT;
+  unsigned int yDown  = (y+1 + GAME_HEIGHT) % GAME_HEIGHT;
+
+  /* Count the number of live neighbors */
+  aliveCount = 
+	    sourceGrid[ yUp   * GAME_WIDTH + xLeft  ] +
+        sourceGrid[ y     * GAME_WIDTH + xLeft  ] +
+        sourceGrid[ yDown * GAME_WIDTH + xLeft  ] + 
+	    sourceGrid[ yUp   * GAME_WIDTH + x      ] +
+        sourceGrid[ yDown * GAME_WIDTH + x      ] +
+	    sourceGrid[ yUp   * GAME_WIDTH + xRight ] +
+        sourceGrid[ y     * GAME_WIDTH + xRight ] +
+        sourceGrid[ yDown * GAME_WIDTH + xRight ]; 
+
+  /* Calculate the next state of the cell */
+  destGrid[tid] = aliveCount == 3 || (aliveCount == 2 && sourceGrid[tid]) ? 1 : 0;
+
+}
+
+/* ***************************************************
+*  FUNCTION:  gpu_init
+*
+*  DESCRIPTION:
+*    Allocate memory on the GPU 
+*  
+*  PARAMETERS:
+*    none
+*     
+*  RETURN VALUE:
+*    none
+*
+* ****************************************************/
+void gpu_init()
+{
+  /* Allocate memory on the GPU */
+  cudaMalloc(&lifeData, GAME_WIDTH*GAME_HEIGHT);
+  cudaMalloc(&nextLifeData, GAME_WIDTH*GAME_HEIGHT);
+
+  /* Transfer data to the GPU */
+  cudaMemcpy( lifeData,      grid, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyHostToDevice );
+  cudaMemcpy( nextLifeData,  nextGrid, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyHostToDevice );
+
+/* ***************************************************
+*  FUNCTION:  runLifeKernel
+*
+*  DESCRIPTION:
+*    Run one step of the simulation through the CUDA kernel
+*  
+*  PARAMETERS:
+*    none
+*     
+*  RETURN VALUE:
+*    none
+*
+* ****************************************************/
+void runLifeKernel()
+{
+  /* run kernel */
+  life_kernel<<<NUM_BLOCKS, NUM_THREADS>>>(lifeData, nextLifeData);
+
+  /* transfer results from GPU */
+  cudaMemcpy(grid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost );
+
+  /* Swap the GPU arrays */
+  char *tempData;
+  tempData = lifeData;
+  lifeData = nextLifeData;
+  nextLifeData = temp;
+}
 
 /* ***************************************************
 *  FUNCTION:  timer_start
@@ -98,6 +202,7 @@ long timer_end(struct timespec start_time){
     return diffInNanos;
 }
 // ----- END TIMING FUNCTIONS ------------------------
+
 
 
 /* ***************************************************
@@ -190,7 +295,7 @@ void reshape(int w, int h) {
 * ****************************************************/
 void update() {
 	struct timespec vartime = timer_start();
-    life_update();
+    runLifeKernel();
 	long time_elapsed_nanos = timer_end(vartime);
 	printf("Time taken (nanoseconds): %ld\n", time_elapsed_nanos);
 	glutPostRedisplay();
@@ -244,8 +349,8 @@ void add_rabbits_pattern(int start_x, int start_y)
   
   for(i=0; i<18; i+=2)
   {
-    x = (rabbits_pattern[i] + start_x + game_width) % game_width;
-    y = (rabbits_pattern[i+1] + start_y + game_height) % game_height;
+    x = mod(rabbits_pattern[i] + start_x, game_width);
+    y = mod(rabbits_pattern[i+1] + start_y, game_height);
 
     grid[y*game_width+x] = 1;
   }
@@ -290,60 +395,6 @@ void life_init()
 }
 
 /* ***************************************************
-*  FUNCTION:  life_update
-*
-*  DESCRIPTION:
-*    Applies "Game of Life" rules to the array pointed
-*    to by char *grid, saves results of one step of
-*    simulation to *nextGrid, then swaps the two buffers
-*    so the results are displayed to the screen 
-*  
-*  PARAMETERS:
-*    none
-*
-*  RETURN VALUE:
-*    none
-*
-* ****************************************************/
-void life_update()
-{
-  int x,y,aliveCount;
-  for( x = 0; x < GAME_WIDTH; x++ )
-  {
-    for( y = 0; y < GAME_HEIGHT; y++ )
-    { 
-
-	  unsigned int xLeft  = (x-1 + GAME_WIDTH)  % GAME_WIDTH;
-	  unsigned int xRight = (x+1 + GAME_WIDTH)  % GAME_WIDTH;
-	  unsigned int yUp    = (y-1 + GAME_HEIGHT) % GAME_HEIGHT;
-	  unsigned int yDown  = (y+1 + GAME_HEIGHT) % GAME_HEIGHT;
-
-      /* Count the number of live neighbors */
-      aliveCount = 
-	    grid[ yUp   * GAME_WIDTH + xLeft  ] +
-        grid[ y     * GAME_WIDTH + xLeft  ] +
-        grid[ yDown * GAME_WIDTH + xLeft  ] + 
-	    grid[ yUp   * GAME_WIDTH + x      ] +
-        grid[ yDown * GAME_WIDTH + x      ] +
-	    grid[ yUp   * GAME_WIDTH + xRight ] +
-        grid[ y     * GAME_WIDTH + xRight ] +
-        grid[ yDown * GAME_WIDTH + xRight ]; 
-
-      /* Calculate the next state of the cell */
-      nextGrid[y*GAME_WIDTH + x] = aliveCount == 3 || 
-        (aliveCount == 2 && grid[y*GAME_WIDTH + x]) ? 1 : 0;
-    }
-  }  
-  
-  // Swap the grid arrays
-  char *tempGrid;
-  tempGrid = grid;
-  grid = nextGrid;
-  nextGrid = tempGrid;
-
-}
-
-/* ***************************************************
 *  FUNCTION:  main
 *
 *  DESCRIPTION:
@@ -362,11 +413,15 @@ void life_update()
 * ****************************************************/
 int main(int argc, char **argv)
 {
+  // Initialize OpenGL/GLUT
   glutInit(&argc, argv);
   graphics_init();
 
   // Initialize array
   life_init();
+
+  // Initialize GPU
+  gpu_init();
 
   // Begin main loop
   glutMainLoop();
