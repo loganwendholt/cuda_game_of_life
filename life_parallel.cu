@@ -65,8 +65,9 @@ char *nextLifeData;
 // global timer used to calculate frame rate
 struct timespec frame_timer;
 
-// CUDA stream identifier
+// CUDA stream identifiers
 cudaStream_t stream1;
+cudaStream_t stream2;
 
 /* ----- Function Definitions ----- */
 
@@ -144,16 +145,19 @@ void gpu_init()
   cudaMemcpy( nextLifeData,  nextGrid, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyHostToDevice );
   
   /* Perform initial simulation step */
-  life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData);
-  
-  /* transfer results from GPU */
-  cudaMemcpyAsync(grid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream1 );
+  life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData); 
   
   /* Swap the GPU arrays */
   char *tempData;
   tempData = lifeData;
   lifeData = nextLifeData;
   nextLifeData = tempData;
+   
+  /* transfer results from GPU */
+  cudaMemcpyAsync(grid, lifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream1 );
+ 
+  /* Perform simulation step */
+  life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream2>>>(lifeData, nextLifeData);
   
   /* start framerate timer */
   frame_timer = timer_start();
@@ -174,23 +178,27 @@ void gpu_init()
 * ****************************************************/
 void runLifeKernel()
 {
-  struct timespec vartime = timer_start();
-  /* run kernel */
-  life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData);
-  long time_elapsed_nanos = timer_end(vartime);
-  printf("Kernel Time: (nanoseconds): %ld  ", time_elapsed_nanos);
-
-  vartime = timer_start();
-  /* transfer results from GPU */
-  cudaMemcpyAsync(nextGrid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream1 );
-  time_elapsed_nanos = timer_end(vartime);
-  printf("Transfer Time: (nanoseconds): %ld\n", time_elapsed_nanos);
-
+  /* wait for both threads to finish */
+  //cudaDeviceSynchronize();
+ 
   /* Swap the GPU arrays */
   char *tempData;
   tempData = lifeData;
   lifeData = nextLifeData;
   nextLifeData = tempData;
+  
+  /* run kernel */
+  life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData);
+  
+  /* transfer results from GPU */
+  cudaMemcpyAsync(nextGrid, lifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream2 );
+
+  /* swap stream references */
+  cudaStream_t temp;
+  temp = stream1;
+  stream1 = stream2;
+  stream2 = temp;
+
 }
 
 /* ***************************************************
