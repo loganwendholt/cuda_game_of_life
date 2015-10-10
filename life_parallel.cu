@@ -97,7 +97,7 @@ __global__ void life_kernel(char *sourceGrid, char *destGrid)
   unsigned int yDown  = (y+1 + GAME_HEIGHT) % GAME_HEIGHT;
 
   /* Count the number of live neighbors */
-  aliveCount = 
+  unsigned int aliveCount = 
 	    sourceGrid[ yUp   * GAME_WIDTH + xLeft  ] +
         sourceGrid[ y     * GAME_WIDTH + xLeft  ] +
         sourceGrid[ yDown * GAME_WIDTH + xLeft  ] + 
@@ -134,6 +134,7 @@ void gpu_init()
   /* Transfer data to the GPU */
   cudaMemcpy( lifeData,      grid, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyHostToDevice );
   cudaMemcpy( nextLifeData,  nextGrid, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyHostToDevice );
+}
 
 /* ***************************************************
 *  FUNCTION:  runLifeKernel
@@ -160,7 +161,7 @@ void runLifeKernel()
   char *tempData;
   tempData = lifeData;
   lifeData = nextLifeData;
-  nextLifeData = temp;
+  nextLifeData = tempData;
 }
 
 /* ***************************************************
@@ -349,8 +350,8 @@ void add_rabbits_pattern(int start_x, int start_y)
   
   for(i=0; i<18; i+=2)
   {
-    x = mod(rabbits_pattern[i] + start_x, game_width);
-    y = mod(rabbits_pattern[i+1] + start_y, game_height);
+    x = (rabbits_pattern[i] + start_x + game_width) % game_width;
+    y = (rabbits_pattern[i+1] + start_y + game_height) % game_height;
 
     grid[y*game_width+x] = 1;
   }
