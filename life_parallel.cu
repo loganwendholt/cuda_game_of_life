@@ -3,11 +3,14 @@
 # include <math.h>
 # include <time.h>
 # include <string.h>
-
+# include <cuda_runtime.h>
+# define GL_GLEXT_PROTOTYPES
 /* Include the OpenGL headers */
 # include <GL/gl.h>
+# include <GL/glext.h>
 # include <GL/glu.h>
 # include <GL/glut.h>
+# include <cuda_gl_interop.h>
 
 /* ----- Function Declarations ----- */
 void life_init();
@@ -20,6 +23,8 @@ void graphics_init();
 void add_rabbits_pattern(int start_x, int start_y);
 struct timespec timer_start();
 long timer_end(struct timespec start_time);
+void drawTexture();
+void displayLifeKernel();
 
 /* ----- Defines ----- */
 #define WINDOW_WIDTH 640    // width of window in pixels
@@ -51,16 +56,16 @@ GLfloat top = 1.0;
 // These arrays will be used in a "ping-pong" fashion,
 // where one array will be displayed while another array
 // is being filled with updated data 
-char *gridA;
-char *gridB;
+unsigned char *gridA;
+unsigned char *gridB;
 
 // define pointers to allow the grids to be easily swapped
-char *grid;
-char *nextGrid;
+unsigned char *grid;
+unsigned char *nextGrid;
 
 // define pointers to GPU memory
-char *lifeData;
-char *nextLifeData;
+unsigned char *lifeData;
+unsigned char *nextLifeData;
 
 // global timer used to calculate frame rate
 struct timespec frame_timer;
@@ -68,6 +73,17 @@ struct timespec frame_timer;
 // CUDA stream identifiers
 cudaStream_t stream1;
 cudaStream_t stream2;
+
+// Buffer for OpenGL CUDA data
+cudaGraphicsResource* cudaPboResource;
+GLuint gl_pixelBufferObject = 0;
+GLuint gl_texturePtr = 0;
+unsigned char* d_cpuDisplayData;
+
+// Host-side texture pointer
+uchar4* h_textureBufferData;
+// Device-side texture pointer.
+uchar4* d_textureBufferData;
 
 /* ----- Function Definitions ----- */
 
@@ -85,7 +101,7 @@ cudaStream_t stream2;
 *    none
 *
 * ****************************************************/
-__global__ void life_kernel(char *sourceGrid, char *destGrid)
+__global__ void life_kernel(unsigned char *sourceGrid, unsigned char *destGrid)
 {
 
   /* Work out our thread id */
@@ -114,10 +130,26 @@ __global__ void life_kernel(char *sourceGrid, char *destGrid)
       sourceGrid[ yDown * GAME_WIDTH + xRight ]; 
 
   /* Calculate the next state of the cell */
-  destGrid[tid] = aliveCount == 3 || (aliveCount == 2 && sourceGrid[tid]) ? 1 : 0;
+  destGrid[tid] = aliveCount == 3 || (aliveCount == 2 && sourceGrid[tid]) ? 255 : 0;
 
 }
 
+__global__ void displayLifeKernel(const unsigned char* lifeData, uchar4* destination) 
+{
+  /* determine thread ID */
+  unsigned int idx = (blockIdx.x * blockDim.x) + threadIdx.x;
+  unsigned int idy = (blockIdx.y * blockDim.y) + threadIdx.y;
+  unsigned int tid = idx + idy * blockDim.x * gridDim.x;
+
+  /* Get cell status */
+  unsigned int value = lifeData[tid];
+
+  /* assign values to screen buffer */
+  destination[tid].x = value;
+  destination[tid].y = value;
+  destination[tid].z = value;
+  destination[tid].w = value;
+}
 /* ***************************************************
 *  FUNCTION:  gpu_init
 *
@@ -148,7 +180,7 @@ void gpu_init()
   life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData); 
   
   /* Swap the GPU arrays */
-  char *tempData;
+  unsigned char *tempData;
   tempData = lifeData;
   lifeData = nextLifeData;
   nextLifeData = tempData;
@@ -182,7 +214,7 @@ void runLifeKernel()
   //cudaDeviceSynchronize();
  
   /* Swap the GPU arrays */
-  char *tempData;
+  unsigned char *tempData;
   tempData = lifeData;
   lifeData = nextLifeData;
   nextLifeData = tempData;
@@ -287,7 +319,7 @@ void display() {
   glutSwapBuffers();
  
   /* Swap the host arrays */
-  char *temp;
+  unsigned char *temp;
   temp = grid;
   grid = nextGrid;
   nextGrid = temp;
@@ -298,6 +330,89 @@ void display() {
 
   frame_timer = timer_start();
   
+}
+
+void cudaDisplay()
+{
+  printf("Entering display...\n");
+  cudaGraphicsMapResources(1, &cudaPboResource, 0);
+ 
+  size_t num_bytes;
+  cudaGraphicsResourceGetMappedPointer((void**)&d_textureBufferData, &num_bytes, cudaPboResource);
+
+  displayLifeKernel<<<NUM_BLOCKS, NUM_THREADS>>>(grid, d_textureBufferData);
+  cudaDeviceSynchronize();
+
+  cudaGraphicsUnmapResources(1, &cudaPboResource, 0);
+  
+  drawTexture();
+}
+
+void drawTexture()
+{
+  glColor3f(WHITE);
+  glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
+
+  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, window_width, window_height, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+
+  glBegin(GL_QUADS);
+    glTexCoord2f(0.0f, 0.0f);
+    glVertex2f(0.0f, 0.0f);
+    glTexCoord2f(1.0f, 0.0f);
+    glVertex2f(float(window_width), 0.0f);
+    glTexCoord2f(1.0f, 1.0f);
+    glVertex2f(float(window_width), float(window_height));
+    glTexCoord2f(0.0f, 1.0f);
+    glVertex2f(0.0f, float(window_height));
+  glEnd();
+
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+  glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+bool initOpenGlBuffers(int width, int height) 
+{
+
+printf("Check1\n");
+  glDeleteTextures(1, &gl_texturePtr);
+  gl_texturePtr = 0;
+
+printf("Check2\n");
+  if (gl_pixelBufferObject) 
+  {
+    cudaGraphicsUnregisterResource(cudaPboResource);
+    glDeleteBuffers(1, &gl_pixelBufferObject);
+    gl_pixelBufferObject = 0;
+  }
+
+printf("Check3\n");
+  
+  glEnable(GL_TEXTURE_2D);
+  
+  glGenTextures(1, &gl_texturePtr);
+  glBindTexture(GL_TEXTURE_2D, gl_texturePtr);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, h_textureBufferData);
+printf("3b\n");
+  glGenBuffers(1, &gl_pixelBufferObject);
+printf("3c\n");
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, gl_pixelBufferObject);
+printf("3d\n");
+  glBufferData(GL_PIXEL_UNPACK_BUFFER_ARB, width * height * sizeof(uchar4), h_textureBufferData, GL_STREAM_COPY);
+
+printf("Check4\n");		
+  cudaError result = cudaGraphicsGLRegisterBuffer(&cudaPboResource, gl_pixelBufferObject, cudaGraphicsMapFlagsWriteDiscard);
+  if (result != cudaSuccess) {
+    return false;
+  }
+
+  glBindBuffer(GL_PIXEL_UNPACK_BUFFER_ARB, 0);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  return true;
 }
 
 
@@ -317,6 +432,7 @@ void display() {
 *
 * ****************************************************/
 void reshape(int w, int h) {
+  printf("Entering reshape\n");
   window_width = w;
   window_height = h;
 
@@ -328,8 +444,12 @@ void reshape(int w, int h) {
 
   glMatrixMode(GL_MODELVIEW);
   glLoadIdentity();
+  printf("initializing buffers\n");
+
+  initOpenGlBuffers(window_width, window_height);
 
   glutPostRedisplay();
+  printf("Exiting reshape\n");
 }
 
 /* ***************************************************
@@ -378,7 +498,7 @@ void graphics_init()
   glClearColor(1, 1, 1, 1);
   
   glutReshapeFunc(reshape);
-  glutDisplayFunc(display);
+  glutDisplayFunc(cudaDisplay);
   glutIdleFunc(update);
 }
 
@@ -406,7 +526,7 @@ void add_rabbits_pattern(int start_x, int start_y)
     x = (rabbits_pattern[i] + start_x + game_width) % game_width;
     y = (rabbits_pattern[i+1] + start_y + game_height) % game_height;
 
-    grid[y*game_width+x] = 1;
+    grid[y*game_width+x] = 255;
   }
 }
 
@@ -487,7 +607,7 @@ int main(int argc, char **argv)
 
   // Initialize GPU
   gpu_init();
-
+  printf("GPU initialized\n");
   // Begin main loop
   glutMainLoop();
 
