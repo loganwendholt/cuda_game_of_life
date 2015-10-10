@@ -27,8 +27,8 @@ long timer_end(struct timespec start_time);
 #define GAME_WIDTH 128      // number of cells it takes to span the window horizontally
 #define GAME_HEIGHT 96      // number of cells it takes to span the window vertically
 
-#define NUM_BLOCKS GAME_HEIGHT
-#define NUM_THREADS GAME_WIDTH
+#define NUM_BLOCKS GAME_HEIGHT*GAME_WIDTH/128
+#define NUM_THREADS 128
 
 #define WHITE 1.0, 1.0, 1.0 // RGB float values for white, in OpenGL format
 #define BLACK 0.0, 0.0, 0.0 // RGB float values for black, in OpenGL format
@@ -51,17 +51,22 @@ GLfloat top = 1.0;
 // These arrays will be used in a "ping-pong" fashion,
 // where one array will be displayed while another array
 // is being filled with updated data 
-char gridA[GAME_HEIGHT*GAME_WIDTH];
-char gridB[GAME_HEIGHT*GAME_WIDTH];
+char *gridA;
+char *gridB;
 
 // define pointers to allow the grids to be easily swapped
-char *grid = gridA;
-char *nextGrid = gridB; 
+char *grid;
+char *nextGrid;
 
 // define pointers to GPU memory
 char *lifeData;
 char *nextLifeData;
 
+// global timer used to calculate frame rate
+struct timespec frame_timer;
+
+// CUDA stream identifier
+cudaStream_t stream1;
 
 /* ----- Function Definitions ----- */
 
@@ -127,6 +132,9 @@ __global__ void life_kernel(char *sourceGrid, char *destGrid)
 * ****************************************************/
 void gpu_init()
 {
+  /* Create CUDA stream */
+  cudaStreamCreate(&stream1);
+
   /* Allocate memory on the GPU */
   cudaMalloc(&lifeData, GAME_WIDTH*GAME_HEIGHT);
   cudaMalloc(&nextLifeData, GAME_WIDTH*GAME_HEIGHT);
@@ -134,6 +142,21 @@ void gpu_init()
   /* Transfer data to the GPU */
   cudaMemcpy( lifeData,      grid, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyHostToDevice );
   cudaMemcpy( nextLifeData,  nextGrid, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyHostToDevice );
+  
+  /* Perform initial simulation step */
+  life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData);
+  
+  /* transfer results from GPU */
+  cudaMemcpyAsync(grid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream1 );
+  
+  /* Swap the GPU arrays */
+  char *tempData;
+  tempData = lifeData;
+  lifeData = nextLifeData;
+  nextLifeData = tempData;
+  
+  /* start framerate timer */
+  frame_timer = timer_start();
 }
 
 /* ***************************************************
@@ -151,11 +174,17 @@ void gpu_init()
 * ****************************************************/
 void runLifeKernel()
 {
+  struct timespec vartime = timer_start();
   /* run kernel */
-  life_kernel<<<NUM_BLOCKS, NUM_THREADS>>>(lifeData, nextLifeData);
+  life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData);
+  long time_elapsed_nanos = timer_end(vartime);
+  printf("Kernel Time: (nanoseconds): %ld  ", time_elapsed_nanos);
 
+  vartime = timer_start();
   /* transfer results from GPU */
-  cudaMemcpy(grid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost );
+  cudaMemcpyAsync(nextGrid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream1 );
+  time_elapsed_nanos = timer_end(vartime);
+  printf("Transfer Time: (nanoseconds): %ld\n", time_elapsed_nanos);
 
   /* Swap the GPU arrays */
   char *tempData;
@@ -248,6 +277,19 @@ void display() {
       
   glFlush();
   glutSwapBuffers();
+ 
+  /* Swap the host arrays */
+  char *temp;
+  temp = grid;
+  grid = nextGrid;
+  nextGrid = temp;
+
+  /* calculate how long it took to render this frame, then restart counter */ 
+  long time_elapsed_nanos = timer_end(frame_timer);
+  printf("Frame Time: (nanoseconds): %ld\n", time_elapsed_nanos);
+
+  frame_timer = timer_start();
+  
 }
 
 
@@ -379,23 +421,34 @@ void add_rabbits_pattern(int start_x, int start_y)
 void life_init()
 {
   int i, j;
+printf("before\n");
+  /* Allocate page-locked memory on the host */
+  cudaError_t status = cudaMallocHost((void**)&gridA, GAME_WIDTH*GAME_HEIGHT);
+  if (status != cudaSuccess)
+    printf("Error allocating pinned host memory\n");  
+  
+  status = cudaMallocHost((void**)&gridB, GAME_WIDTH*GAME_HEIGHT);
+  if (status != cudaSuccess)
+    printf("Error allocating pinned host memory\n");  
+  printf("after\n");
 
-  // Allocate memory for array
-  //grid = ( char * ) malloc ( ( game_height ) * ( game_width ) * sizeof ( char ) );
+  grid = gridA;
+  nextGrid = gridB;
 
   // zero out both buffers
   for( i = 0; i < game_height; i++ )
   {
     for( j = 0; j < game_width; j++ )
     {
+      printf("%d %d \n", i,j);
       gridA[i*game_width+j] = 0;
       gridB[i*game_width+j] = 0;
     }
   }
-
+  printf("adding rabbits\n");
   // add a pattern to the buffer
   add_rabbits_pattern(game_width/2-3,game_height/2-3);
-
+printf("done\n");
 }
 
 /* ***************************************************
