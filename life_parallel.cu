@@ -98,14 +98,14 @@ __global__ void life_kernel(char *sourceGrid, char *destGrid)
 
   /* Count the number of live neighbors */
   unsigned int aliveCount = 
-	    sourceGrid[ yUp   * GAME_WIDTH + xLeft  ] +
-        sourceGrid[ y     * GAME_WIDTH + xLeft  ] +
-        sourceGrid[ yDown * GAME_WIDTH + xLeft  ] + 
-	    sourceGrid[ yUp   * GAME_WIDTH + x      ] +
-        sourceGrid[ yDown * GAME_WIDTH + x      ] +
-	    sourceGrid[ yUp   * GAME_WIDTH + xRight ] +
-        sourceGrid[ y     * GAME_WIDTH + xRight ] +
-        sourceGrid[ yDown * GAME_WIDTH + xRight ]; 
+      sourceGrid[ yUp   * GAME_WIDTH + xLeft  ] +
+      sourceGrid[ y     * GAME_WIDTH + xLeft  ] +
+      sourceGrid[ yDown * GAME_WIDTH + xLeft  ] + 
+      sourceGrid[ yUp   * GAME_WIDTH + x      ] +
+      sourceGrid[ yDown * GAME_WIDTH + x      ] +
+      sourceGrid[ yUp   * GAME_WIDTH + xRight ] +
+      sourceGrid[ y     * GAME_WIDTH + xRight ] +
+      sourceGrid[ yDown * GAME_WIDTH + xRight ]; 
 
   /* Calculate the next state of the cell */
   destGrid[tid] = aliveCount == 3 || (aliveCount == 2 && sourceGrid[tid]) ? 1 : 0;
@@ -221,30 +221,33 @@ long timer_end(struct timespec start_time){
 *
 * ****************************************************/
 void display() {
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glLoadIdentity();
-	
-    GLfloat xSize = (right - left) / game_width;
-	GLfloat ySize = (top - bottom) / game_height;
-	
-	GLint x,y;	
-    // iterate through the grid and display each cell
-    // as either a white or a black square (quad)
-	glBegin(GL_QUADS);
-	for (x = 0; x < game_width; ++x) {
-		for (y = 0; y < game_height; ++y) {
-            grid[x+y*game_width]?glColor3f(BLACK):glColor3f(WHITE);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glLoadIdentity();
+  
+  GLfloat xSize = (right - left) / game_width;
+  GLfloat ySize = (top - bottom) / game_height;
+  
+  
+  // iterate through the grid and display each cell
+  // as either a white or a black square (quad)
+  GLint x,y;
+  glBegin(GL_QUADS);
+  for (x = 0; x < game_width; ++x) 
+  {
+    for (y = 0; y < game_height; ++y)
+    {
+      grid[x+y*game_width]?glColor3f(BLACK):glColor3f(WHITE);
             
-			glVertex2f(    x*xSize+left,    y*ySize+bottom);
-			glVertex2f((x+1)*xSize+left,    y*ySize+bottom);
-			glVertex2f((x+1)*xSize+left,(y+1)*ySize+bottom);
-			glVertex2f(    x*xSize+left,(y+1)*ySize+bottom);
-		}
-	}
-	glEnd();
-    	
-	glFlush();
-	glutSwapBuffers();
+      glVertex2f(    x*xSize+left,    y*ySize+bottom);
+      glVertex2f((x+1)*xSize+left,    y*ySize+bottom);
+      glVertex2f((x+1)*xSize+left,(y+1)*ySize+bottom);
+      glVertex2f(    x*xSize+left,(y+1)*ySize+bottom);
+    }
+  }
+  glEnd();
+      
+  glFlush();
+  glutSwapBuffers();
 }
 
 
@@ -264,19 +267,19 @@ void display() {
 *
 * ****************************************************/
 void reshape(int w, int h) {
-	window_width = w;
-	window_height = h;
+  window_width = w;
+  window_height = h;
 
-	glViewport(0, 0, window_width, window_height);
+  glViewport(0, 0, window_width, window_height);
 
-	glMatrixMode(GL_PROJECTION);
-	glLoadIdentity();
-	gluOrtho2D(left, right, bottom, top);
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity();
+  gluOrtho2D(left, right, bottom, top);
 
-	glMatrixMode(GL_MODELVIEW);
-	glLoadIdentity();
+  glMatrixMode(GL_MODELVIEW);
+  glLoadIdentity();
 
-	glutPostRedisplay();
+  glutPostRedisplay();
 }
 
 /* ***************************************************
@@ -295,11 +298,11 @@ void reshape(int w, int h) {
 *
 * ****************************************************/
 void update() {
-	struct timespec vartime = timer_start();
-    runLifeKernel();
-	long time_elapsed_nanos = timer_end(vartime);
-	printf("Time taken (nanoseconds): %ld\n", time_elapsed_nanos);
-	glutPostRedisplay();
+  struct timespec vartime = timer_start();
+  runLifeKernel();
+  long time_elapsed_nanos = timer_end(vartime);
+  printf("Time taken (nanoseconds): %ld\n", time_elapsed_nanos);
+  glutPostRedisplay();
 }
 
 /* ***************************************************
@@ -318,15 +321,15 @@ void update() {
 * ****************************************************/
 void graphics_init()
 {
-	
-	glutInitWindowSize(window_width, window_height);
-	glutInitWindowPosition(0, 0);
-	glutCreateWindow("Game of Life");
-	glClearColor(1, 1, 1, 1);
-	
-	glutReshapeFunc(reshape);
-	glutDisplayFunc(display);
-    glutIdleFunc(update);
+  
+  glutInitWindowSize(window_width, window_height);
+  glutInitWindowPosition(0, 0);
+  glutCreateWindow("Game of Life");
+  glClearColor(1, 1, 1, 1);
+  
+  glutReshapeFunc(reshape);
+  glutDisplayFunc(display);
+  glutIdleFunc(update);
 }
 
 /* ***************************************************
