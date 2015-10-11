@@ -147,7 +147,8 @@ void gpu_init()
   life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData);
   
   /* transfer results from GPU */
-  cudaMemcpyAsync(grid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream1 );
+  cudaMemcpy(grid, lifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost );
+  cudaMemcpy(nextGrid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost );
   
   /* Swap the GPU arrays */
   char *tempData;
@@ -181,7 +182,7 @@ void runLifeKernel()
   life_kernel<<<NUM_BLOCKS, NUM_THREADS, 0, stream1>>>(lifeData, nextLifeData);
 #ifdef DEBUG_MODE
   long time_elapsed_nanos = timer_end(vartime);
-  printf("kernel:%d,%lf\n", iteration, time_elapsed_nanos*.000001);
+  printf("kernel:%d,%lf\n", current_iteration, time_elapsed_nanos*.000001);
 #endif
 
 #ifdef DEBUG_MODE
@@ -191,7 +192,7 @@ void runLifeKernel()
   cudaMemcpyAsync(nextGrid, nextLifeData, GAME_WIDTH*GAME_HEIGHT, cudaMemcpyDeviceToHost, stream1 );
 #ifdef DEBUG_MODE
   time_elapsed_nanos = timer_end(vartime);
-  printf("transfer:%d,%lf\n", iteration, time_elapsed_nanos*.000001);
+  printf("transfer:%d,%lf\n", current_iteration, time_elapsed_nanos*.000001);
 #endif
 
   /* Swap the GPU arrays */
@@ -365,7 +366,6 @@ void update() {
   if( current_iteration > ITERATIONS )
     exit(0);
    
-  printf("update:%d,",current_iteration);
   struct timespec vartime = timer_start();
 #endif
 
@@ -373,7 +373,7 @@ void update() {
 
 #ifdef DEBUG_MODE
   long time_elapsed_nanos = timer_end(vartime);
-  printf("%lf\n", (time_elapsed_nanos*.000001)); // display time in ms
+  printf("update:%d,%lf\n", current_iteration, time_elapsed_nanos*.000001); // display time in ms
   glutPostRedisplay();
 #endif
 

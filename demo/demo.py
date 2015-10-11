@@ -23,7 +23,7 @@ window_width = 640
 window_height = 480
 game_width = 128
 game_height = 96
-iterations = 1000
+iterations = 100
 
 blocksThreads = ([game_width*game_height/16, 16], 
 					[game_width*game_height/32, 32], 
